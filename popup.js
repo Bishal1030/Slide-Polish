@@ -1,16 +1,8 @@
-// ============================================
-// CONFIGURATION
-// ============================================
-// API key is loaded from chrome.storage.sync via getApiKey()
 
-// ============================================
-// STATE
-// ============================================
+
 let selectedTone = "precise"
 
-// ============================================
-// DOM ELEMENTS
-// ============================================
+
 const textInput = document.getElementById("textInput")
 const generateBtn = document.getElementById("generateBtn")
 const loadingDiv = document.getElementById("loading")
@@ -19,11 +11,8 @@ const resultsList = document.getElementById("resultsList")
 const errorMsg = document.getElementById("errorMsg")
 const toneBtns = document.querySelectorAll(".tone-btn")
 
-// ============================================
-// INITIALIZATION
-// ============================================
+
 document.addEventListener("DOMContentLoaded", () => {
-  // Load pre-filled text from context menu
   window.chrome.storage.local.get(["selectedText"], (result) => {
     if (result.selectedText) {
       textInput.value = result.selectedText
@@ -32,12 +21,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   })
 
-  // Set up event listeners
   setupEventListeners()
 })
 
 function setupEventListeners() {
-  // Tone selection
   toneBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       toneBtns.forEach((b) => b.classList.remove("active"))
@@ -49,7 +36,6 @@ function setupEventListeners() {
   // Generate button
   generateBtn.addEventListener("click", handleGenerate)
 
-  // Allow Enter key to generate (Ctrl+Enter or Cmd+Enter)
   textInput.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       handleGenerate()
@@ -57,9 +43,7 @@ function setupEventListeners() {
   })
 }
 
-// ============================================
-// EVENT HANDLERS
-// ============================================
+
 async function handleGenerate() {
   const text = textInput.value.trim()
 
@@ -173,9 +157,7 @@ Return ONLY valid JSON with no markdown, no code blocks, and no extra text:
   }
 }
 
-// ============================================
-// UI FUNCTIONS
-// ============================================
+
 function displayResults(rewrites) {
   resultsList.innerHTML = ""
 
@@ -244,9 +226,7 @@ function escapeHtml(text) {
   return div.innerHTML
 }
 
-// ============================================
-// SETTINGS
-// ============================================
+
 async function getApiKey() {
   try {
     const { OPENAI_API_KEY } = await chrome.storage.sync.get(["OPENAI_API_KEY"])
@@ -256,9 +236,7 @@ async function getApiKey() {
   }
 }
 
-// ============================================
-// BACKEND PROXY CALL (uses your server-side API key)
-// ============================================
+
 async function generateViaBackend(text, tone) {
   if (!CONFIG || !CONFIG.BACKEND_URL) return []
 
