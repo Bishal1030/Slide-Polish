@@ -63,25 +63,18 @@ function setupEventListeners() {
 async function handleGenerate() {
   const text = textInput.value.trim()
 
-  // Validation
   if (!text) {
     showError("Please paste some text to rewrite.")
     return
   }
 
-  const apiKey = await getApiKey()
-  if (!apiKey) {
-    showError("⚠️ OpenAI API key not set. Open extension Settings to add it.")
-    return
-  }
-
-  // Show loading state
   showLoading(true)
   hideError()
   resultsSection.classList.add("hidden")
 
   try {
-    const rewrites = await generateRewrites(text, selectedTone, apiKey)
+    // Always use backend
+    const rewrites = await generateViaBackend(text, selectedTone)
 
     if (!rewrites || rewrites.length === 0) {
       showError("No rewrites generated. Please try again.")
@@ -96,10 +89,11 @@ async function handleGenerate() {
   }
 }
 
+
 // ============================================
 // API CALL
 // ============================================
-async function generateRewrites(text, tone, apiKey) {
+async function generateRewrites(text, tone) {
   const toneDescriptions = {
     precise: "concise and precise, removing any fluff or unnecessary words",
     professional: "professional and formal, suitable for business communication",
@@ -131,7 +125,6 @@ Return ONLY valid JSON with no markdown, no code blocks, and no extra text:
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
@@ -262,3 +255,31 @@ async function getApiKey() {
     return ""
   }
 }
+
+// ============================================
+// BACKEND PROXY CALL (uses your server-side API key)
+// ============================================
+async function generateViaBackend(text, tone) {
+  if (!CONFIG || !CONFIG.BACKEND_URL) return []
+
+  const url = CONFIG.BACKEND_URL
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, tone })
+    })
+
+    console.log("Backend response status:", res.status)
+    const data = await res.json().catch(() => {
+      console.log("Failed to parse JSON from backend")
+      return {}
+    })
+    console.log("Backend returned data:", data)
+    return Array.isArray(data.rewrites) ? data.rewrites : []
+  } catch (err) {
+    console.error("Backend fetch error:", err)
+    return []
+  }
+}
+
