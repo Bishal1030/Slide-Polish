@@ -5,7 +5,8 @@
   "description": "Instantly rewrite slide text with AI-powered tone selection",
   "permissions": ["contextMenus", "scripting", "activeTab", "storage"],
   "host_permissions": [
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "https://slide-polish-api.slidepolish.workers.dev/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -16,7 +17,6 @@
     "48": "assets/icon48.png",
     "128": "assets/icon128.png"
   },
-  "options_page": "options.html",
   "background": {
     "service_worker": "background.js"
   },
