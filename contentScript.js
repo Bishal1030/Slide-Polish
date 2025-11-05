@@ -7,32 +7,61 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
+      /* Scope styles to only affect our button */
       #${BUTTON_ID} {
         position: fixed;
-        right: 20px;
-        bottom: 20px;
+        right: 24px;
+        bottom: 24px;
         z-index: 2147483647;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: rgba(40, 45, 52, 0.75);
+        backdrop-filter: blur(30px) saturate(180%);
+        -webkit-backdrop-filter: blur(30px) saturate(180%);
         color: #fff;
-        border: none;
-        border-radius: 999px;
-        padding: 10px 14px;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.4px;
-        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 14px;
+        padding: 11px 16px;
+        font-size: 13px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.15);
         cursor: pointer;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 9px;
+        transition: all 0.2s ease;
       }
-      #${BUTTON_ID}:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(102,126,234,0.45); }
-      #${BUTTON_ID}:active { transform: translateY(0); }
-      #${BUTTON_ID} .sp-dot {
-        width: 8px; height: 8px; border-radius: 50%; background: #fff; opacity: 0.9;
+      #${BUTTON_ID}:hover { 
+        transform: translateY(-2px); 
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        background: rgba(40, 45, 52, 0.85);
+        border-color: rgba(255, 255, 255, 0.25);
+      }
+      #${BUTTON_ID}:active { 
+        transform: translateY(0); 
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      }
+      #${BUTTON_ID} .sp-icon {
+        width: 18px;
+        height: 18px;
+        object-fit: contain;
+        filter: brightness(1.1) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+      }
+      #${BUTTON_ID} .sp-text {
+        font-weight: 600;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
       }
       @media (max-width: 900px) {
-        #${BUTTON_ID} { right: 12px; bottom: 12px; padding: 9px 12px; font-size: 11px; }
+        #${BUTTON_ID} { 
+          right: 16px; 
+          bottom: 16px; 
+          padding: 9px 13px; 
+          font-size: 12px; 
+        }
+        #${BUTTON_ID} .sp-icon {
+          width: 16px;
+          height: 16px;
+        }
       }
     `;
     document.documentElement.appendChild(style);
@@ -43,8 +72,13 @@
     const btn = document.createElement("button");
     btn.id = BUTTON_ID;
     btn.type = "button";
-    btn.title = "Rewrite with Slide Polish";
-    btn.innerHTML = `<span class="sp-dot"></span> Rewrite with Slide Polish`;
+    btn.title = "Rewrite with SlidePolish - Professional slide formatter";
+    
+    const iconUrl = chrome.runtime.getURL("assets/star48.png");
+    btn.innerHTML = `
+      <img src="${iconUrl}" alt="SlidePolish" class="sp-icon" />
+      <span class="sp-text">Polish Slide</span>
+    `;
     btn.addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "openPopup" });
     }, { once: false });
