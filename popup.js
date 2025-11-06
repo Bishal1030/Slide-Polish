@@ -1,7 +1,42 @@
 
 
-let selectedTone = "executive"
+const STORAGE_KEY = "slidePolishPopupState"
 
+let selectedTone = "executive"
+let currentState = { text: "", tone: selectedTone, results: [] }
+
+function updateState(updates = {}, { persist = true } = {}) {
+  currentState = { ...currentState, ...updates }
+  if (persist) {
+    chrome.storage.local.set({ [STORAGE_KEY]: currentState })
+  }
+}
+
+function clearState() {
+  currentState = { text: "", tone: "executive", results: [] }
+  chrome.storage.local.remove(STORAGE_KEY)
+}
+
+function restoreState() {
+  chrome.storage.local.get([STORAGE_KEY], (data) => {
+    const saved = data?.[STORAGE_KEY]
+    if (!saved) return
+
+    currentState = { ...currentState, ...saved }
+
+    if (saved.text) {
+      textInput.value = saved.text
+    }
+
+    if (saved.tone) {
+      setActiveTone(saved.tone, { persist: false })
+    }
+
+    if (Array.isArray(saved.results) && saved.results.length > 0) {
+      displayResults(saved.results, { skipSave: true })
+    }
+  })
+}
 
 const textInput = document.getElementById("textInput")
 const polishBtn = document.getElementById("polishBtn")
@@ -14,9 +49,23 @@ const toneSection = document.getElementById("toneSection")
 const tabs = document.querySelectorAll(".tab")
 const toneBtns = document.querySelectorAll(".tone-btn")
 
+function setActiveTone(tone, { persist = true } = {}) {
+  selectedTone = tone || "executive"
+  toneBtns.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tone === selectedTone)
+  })
+  updateState({ tone: selectedTone }, { persist })
+}
+
 // Close button handler
 closeBtn?.addEventListener("click", () => {
-    window.close()
+  textInput.value = ""
+  resultsList.innerHTML = ""
+  resultsSection.classList.add("hidden")
+  document.querySelector(".content")?.classList.remove("has-results")
+  setActiveTone(toneBtns[0]?.dataset.tone || "executive", { persist: false })
+  clearState()
+  window.close()
 })
 
 
@@ -24,7 +73,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Get DOM elements
   const rephraseAction = document.getElementById("rephraseAction")
   const adjustToneAction = document.getElementById("adjustToneAction")
-  const toneSection = document.getElementById("toneSection")
 
   // Initialize state - hide all sections
   toneSection.classList.add("hidden")
@@ -32,11 +80,21 @@ document.addEventListener("DOMContentLoaded", () => {
   loadingDiv.classList.add("hidden")
   errorMsg.classList.add("hidden")
 
-  window.chrome.storage.local.get(["selectedText"], (result) => {
+  // Ensure tone selection reflects current state
+  setActiveTone(selectedTone, { persist: false })
+
+  chrome.storage.local.get(["selectedText"], (result) => {
     if (result.selectedText) {
-      textInput.value = result.selectedText
+      const newText = result.selectedText
+      textInput.value = newText
       textInput.focus()
-      window.chrome.storage.local.remove(["selectedText"])
+      updateState({ text: newText, results: [], tone: selectedTone })
+      resultsList.innerHTML = ""
+      resultsSection.classList.add("hidden")
+      document.querySelector(".content")?.classList.remove("has-results")
+      chrome.storage.local.remove(["selectedText"])
+    } else {
+      restoreState()
     }
   })
 
@@ -92,10 +150,13 @@ function setupEventListeners() {
   // Tone buttons
   toneBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
-      toneBtns.forEach((b) => b.classList.remove("active"))
-      btn.classList.add("active")
-      selectedTone = btn.dataset.tone
+      setActiveTone(btn.dataset.tone)
     })
+  })
+
+  // Persist text input changes
+  textInput.addEventListener("input", (e) => {
+    updateState({ text: e.target.value })
   })
 
   // Polish button
@@ -124,14 +185,7 @@ async function handleGenerate(forceNew = false) {
   polishBtn.disabled = true
 
   try {
-    // Try backend first, fall back to direct API
-    let rewrites;
-    try {
-      rewrites = await generateViaBackend(text, selectedTone, forceNew)
-    } catch (backendError) {
-      console.log("Backend failed, using direct API:", backendError)
-      rewrites = await generateRewrites(text, selectedTone)
-    }
+    const rewrites = await generateViaBackend(text, selectedTone, forceNew)
 
     if (!rewrites || rewrites.length === 0) {
       throw new Error("No rewrites generated. Please try again.")
@@ -314,7 +368,7 @@ JSON OUTPUT:
 }
 
 
-function displayResults(rewrites) {
+function displayResults(rewrites, { skipSave = false } = {}) {
   resultsList.innerHTML = ""
 
   // Hide tone section when showing results
@@ -347,6 +401,10 @@ function displayResults(rewrites) {
   resultsSection.classList.remove("hidden")
   resultsSection.style.display = "block"
   document.querySelector(".content").classList.add("has-results")
+
+  if (!skipSave) {
+    updateState({ results: rewrites })
+  }
 
   // Reset tab states
   const rephraseAction = document.getElementById("rephraseAction")
