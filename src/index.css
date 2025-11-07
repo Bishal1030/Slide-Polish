@@ -4,9 +4,11 @@
 
 @layer base {
   body {
-    @apply min-h-screen text-[#f2f5ff];
+    @apply min-h-screen text-[#E6F0FA];
     position: relative;
-    background-color: #202C38;
+    background-color: #141821;
+    background-image: radial-gradient(1200px 1200px at 10% 20%, rgba(255, 255, 255, 0.02), transparent);
+    background-repeat: no-repeat;
     font-family: 'Inter', sans-serif;
     overflow-x: hidden;
   }
