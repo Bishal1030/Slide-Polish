@@ -1,6 +1,8 @@
 
 
 const STORAGE_KEY = "slidePolishPopupState"
+const GUARDRAIL_DIRECTIVE = "Important: Use only the information from the original text. Do not invent numbers, metrics, names, or facts. If details are missing, acknowledge the gap instead of guessing."
+const SANITIZE_NOTICE = "Adjusted the rewrite to remove invented numbers. Please double-check the details before using.";
 
 let selectedTone = "executive"
 let currentState = { text: "", tone: selectedTone, results: [] }
@@ -127,13 +129,18 @@ document.addEventListener("DOMContentLoaded", () => {
       polishBtn.disabled = true
 
       // Generate fresh rewrites using the rephrase function
-      const rewrites = await generateRephrases(textInput.value.trim(), selectedTone);
+      const { rewrites, sanitized } = await generateRephrases(textInput.value.trim(), selectedTone);
 
       if (!rewrites || rewrites.length === 0) {
         throw new Error("No results generated. Please try again.");
       }
 
       displayResults(rewrites);
+      if (sanitized) {
+        showError(SANITIZE_NOTICE);
+      } else {
+        hideError();
+      }
     } catch (error) {
       showError(error.message || "Failed to generate rewrites. Please try again.");
     } finally {
@@ -185,13 +192,60 @@ async function handleGenerate(forceNew = false) {
   polishBtn.disabled = true
 
   try {
-    const rewrites = await generateViaBackend(text, selectedTone, forceNew)
+    const originalText = text
+    const attemptConfigs = [
+      { guardrail: false },
+      { guardrail: true }
+    ]
+
+    let rewrites = []
+    let lastValidation = null
+    let lastFailedResponse = null
+    let sanitizedFallback = null
+
+    for (const attempt of attemptConfigs) {
+      const response = await generateViaBackend(originalText, selectedTone, {
+        forceNew: true,
+        guardrail: attempt.guardrail,
+        extraInstructions: attempt.guardrail ? GUARDRAIL_DIRECTIVE : ""
+      })
+
+      if (!response || response.length === 0) {
+        continue
+      }
+
+      const validation = validateRewritesAgainstSource(originalText, response)
+
+      if (validation.isValid) {
+        rewrites = response
+        break
+      }
+
+      lastValidation = validation
+      lastFailedResponse = response
+
+      const sanitized = sanitizeRewrites(originalText, response)
+      const sanitizedValidation = validateRewritesAgainstSource(originalText, sanitized)
+      if (sanitized.length > 0 && sanitizedValidation.isValid) {
+        sanitizedFallback = sanitized
+      }
+    }
 
     if (!rewrites || rewrites.length === 0) {
+      if (sanitizedFallback && sanitizedFallback.length > 0) {
+        displayResults(sanitizedFallback)
+        showError(SANITIZE_NOTICE)
+        return
+      }
+
+      if (lastValidation && !lastValidation.isValid && lastFailedResponse) {
+        throw new Error("Generated rewrites added details that aren't in your original text. Please simplify the request and try again.")
+      }
       throw new Error("No rewrites generated. Please try again.")
     }
 
     displayResults(rewrites)
+    hideError()
   } catch (error) {
     showError(error.message || "Failed to generate rewrites. Please try again.")
   } finally {
@@ -276,9 +330,10 @@ TEXT: "${text}"
 RULES:
 1. Output ONLY bullets (use • character)
 2. NO paragraphs, NO prose
-3. Use \\n between lines
+3. Use \n between lines
 4. Use → for transitions
 5. Include required labels shown in format
+6. Use ONLY details from TEXT; never add numbers, metrics, names, or facts that are not present.
 
 Generate 3 DIFFERENT rewrites in the SAME bullet structure.
 
@@ -302,7 +357,7 @@ JSON OUTPUT:
         messages: [
           {
             role: "system",
-            content: "You are a slide formatter. You output ONLY bullet-point structured text. You NEVER output paragraphs or prose. You MUST use • for bullets, → for transitions, and include required prefixes."
+            content: "You are a slide formatter. You output ONLY bullet-point structured text. You NEVER output paragraphs or prose. You MUST use • for bullets, → for transitions, and include required prefixes. You NEVER fabricate numbers, metrics, or facts that are not explicitly present in the user's text. If detail is missing, leave it generalized without inventing specifics."
           },
           {
             role: "user",
@@ -327,7 +382,7 @@ JSON OUTPUT:
             content: prompt,
           },
         ],
-        temperature: 1.0,
+        temperature: 0.4,
         max_tokens: 1200,
         response_format: { type: "json_object" }
       }),
@@ -456,6 +511,72 @@ function escapeHtml(text) {
   return div.innerHTML
 }
 
+function extractNumericTokens(text) {
+  if (!text) return []
+  return (text.match(/\d[\d+.,%]*/g) || [])
+    .map((match) => match.replace(/[^\d]/g, ""))
+    .filter(Boolean)
+}
+
+function validateRewritesAgainstSource(originalText, rewrites) {
+  const sourceNumbers = new Set(extractNumericTokens(originalText))
+  const sourceHasNumbers = sourceNumbers.size > 0
+
+  const invalidIndexes = []
+
+  rewrites.forEach((rewrite, index) => {
+    const text = typeof rewrite === "string" ? rewrite : rewrite?.text || ""
+    const candidateNumbers = extractNumericTokens(text)
+
+    if (!sourceHasNumbers && candidateNumbers.length > 0) {
+      invalidIndexes.push(index)
+      return
+    }
+
+    const hasUnsupportedNumber = candidateNumbers.some((num) => !sourceNumbers.has(num))
+    if (hasUnsupportedNumber) {
+      invalidIndexes.push(index)
+    }
+  })
+
+  return {
+    isValid: invalidIndexes.length === 0,
+    invalidIndexes,
+  }
+}
+
+function sanitizeRewrites(originalText, rewrites) {
+  const sourceNumbers = new Set(extractNumericTokens(originalText))
+  const cleaned = []
+
+  rewrites.forEach((rewrite) => {
+    const original = typeof rewrite === "string" ? rewrite : rewrite?.text || ""
+    if (!original) return
+
+    let sanitizedText = original.replace(/\d[\d.,%]*/g, (match) => {
+      const normalized = match.replace(/[^\d]/g, "")
+      if (!normalized) return match
+      return sourceNumbers.has(normalized) ? match : ""
+    })
+
+    sanitizedText = sanitizedText
+      .replace(/\s{2,}/g, " ")
+      .replace(/\n\s+/g, "\n")
+      .replace(/•\s*(?=\n|$)/g, "• ")
+      .trim()
+
+    if (!sanitizedText) return
+
+    cleaned.push(
+      typeof rewrite === "string"
+        ? { text: sanitizedText, _sanitized: true }
+        : { ...rewrite, text: sanitizedText, _sanitized: true }
+    )
+  })
+
+  return cleaned
+}
+
 
 async function getApiKey() {
   try {
@@ -467,56 +588,79 @@ async function getApiKey() {
 }
 
 
-async function generateViaBackend(text, tone, forceNew = false, timestamp = null) {
+async function generateViaBackend(text, tone, options = {}) {
   if (!CONFIG || !CONFIG.BACKEND_URL) {
     throw new Error("Backend URL not configured")
   }
 
-  const url = CONFIG.BACKEND_URL
-  try {
-    const uniqueId = Math.random().toString(36).substring(7) + Date.now().toString(36);
-    
-    // Create a unique cache-busting URL for each request
-    const params = new URLSearchParams({
-      _: uniqueId,
-      t: timestamp || Date.now(),
-      r: Math.random()
-    });
+  const {
+    forceNew = false,
+    timestamp = null,
+    guardrail = false,
+    extraInstructions = ""
+  } = options
 
-    const res = await fetch(`${url}?${params}`, {
-      method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0"
-      },
-      body: JSON.stringify({ 
+  const url = CONFIG.BACKEND_URL
+  let lastError
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const uniqueId = Math.random().toString(36).substring(7) + Date.now().toString(36)
+
+      // Create a unique cache-busting URL for each request
+      const params = new URLSearchParams({
+        _: uniqueId,
+        t: (timestamp || Date.now()),
+        r: Math.random()
+      })
+
+      const payload = {
         text,
         tone,
         uniqueId,
         timestamp: Date.now(),
-        temperature: 0.9,
-        forceNew: true
+        temperature: guardrail ? 0.4 : 0.9,
+        forceNew: guardrail ? true : forceNew
+      }
+
+      if (guardrail) {
+        payload.guardrail = true
+        payload.instructions = extraInstructions || GUARDRAIL_DIRECTIVE
+      }
+
+      const res = await fetch(`${url}?${params}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0"
+        },
+        body: JSON.stringify(payload)
       })
-    });
 
-    if (!res.ok) {
-      throw new Error(`Backend error: ${res.status}`)
+      if (!res.ok) {
+        throw new Error(`Backend error: ${res.status}`)
+      }
+
+      const data = await res.json()
+      console.log("Backend returned data:", data)
+
+      if (!Array.isArray(data.rewrites)) {
+        throw new Error("Invalid response format from backend")
+      }
+
+      return data.rewrites
+    } catch (err) {
+      lastError = err
+      console.error("Backend fetch error:", err)
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
+      }
     }
-
-    const data = await res.json()
-    console.log("Backend returned data:", data)
-    
-    if (!Array.isArray(data.rewrites)) {
-      throw new Error("Invalid response format from backend")
-    }
-
-    return data.rewrites
-  } catch (err) {
-    console.error("Backend fetch error:", err)
-    throw new Error("Failed to connect to the backend. Please try again.")
   }
+
+  throw new Error(lastError?.message || "Failed to connect to the backend. Please try again.")
 }
 
 async function generateRephrases(text, tone) {
@@ -524,58 +668,106 @@ async function generateRephrases(text, tone) {
     throw new Error("Backend URL not configured")
   }
 
-  const url = CONFIG.BACKEND_URL
-  try {
-    // Make 3 separate requests with different seeds for truly unique results
+  const fetchBatch = async (useGuardrail = false) => {
+    const url = CONFIG.BACKEND_URL
     const promises = Array.from({ length: 3 }, (_, i) => {
-      const uniqueId = Math.random().toString(36).substring(7) + Date.now().toString(36) + i;
+      const uniqueId = Math.random().toString(36).substring(7) + Date.now().toString(36) + i
       const params = new URLSearchParams({
         _: uniqueId,
         t: Date.now() + i * 100,
         r: Math.random()
-      });
+      })
+
+      const payload = {
+        text,
+        tone,
+        uniqueId,
+        timestamp: Date.now() + i,
+        temperature: useGuardrail ? 0.4 : 0.9,
+        seed: Math.random() * 1000000,
+        forceNew: true
+      }
+
+      if (useGuardrail) {
+        payload.guardrail = true
+        payload.instructions = GUARDRAIL_DIRECTIVE
+      }
 
       return fetch(`${url}?${params}`, {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           "Cache-Control": "no-cache, no-store, must-revalidate",
           "Pragma": "no-cache",
           "Expires": "0"
         },
-        body: JSON.stringify({ 
-          text,
-          tone,
-          uniqueId,
-          timestamp: Date.now() + i,
-          temperature: 0.9,
-          seed: Math.random() * 1000000,
-          forceNew: true
-        })
-      });
-    });
+        body: JSON.stringify(payload)
+      })
+    })
 
-    const responses = await Promise.all(promises);
-    const results = [];
+    const responses = await Promise.all(promises)
+    const batchResults = []
 
     for (const res of responses) {
-      if (res.ok) {
-        const data = await res.json();
-        if (data.rewrites && data.rewrites.length > 0) {
-          // Take first rewrite from each response
-          results.push(data.rewrites[0]);
-        }
+      if (!res.ok) {
+        continue
+      }
+
+      const data = await res.json()
+      if (Array.isArray(data.rewrites) && data.rewrites.length > 0) {
+        batchResults.push(data.rewrites[0])
       }
     }
 
+    return batchResults
+  }
+
+  try {
+    let results = await fetchBatch(false)
     if (results.length === 0) {
-      throw new Error("No results generated");
+      throw new Error("No results generated")
     }
 
-    return results;
+    let validation = validateRewritesAgainstSource(text, results)
+    if (validation.isValid) {
+      return { rewrites: results, sanitized: false }
+    }
+
+    let sanitizedFallback = null
+    const sanitizedInitial = sanitizeRewrites(text, results)
+    const sanitizedInitialValidation = validateRewritesAgainstSource(text, sanitizedInitial)
+    if (sanitizedInitial.length > 0 && sanitizedInitialValidation.isValid) {
+      sanitizedFallback = sanitizedInitial
+    }
+
+    results = await fetchBatch(true)
+    if (results.length === 0) {
+      if (sanitizedFallback) {
+        return { rewrites: sanitizedFallback, sanitized: true }
+      }
+      throw new Error("No results generated")
+    }
+
+    validation = validateRewritesAgainstSource(text, results)
+    if (validation.isValid) {
+      return { rewrites: results, sanitized: false }
+    }
+
+    const sanitizedGuardrail = sanitizeRewrites(text, results)
+    const sanitizedGuardrailValidation = validateRewritesAgainstSource(text, sanitizedGuardrail)
+    if (sanitizedGuardrail.length > 0 && sanitizedGuardrailValidation.isValid) {
+      return { rewrites: sanitizedGuardrail, sanitized: true }
+    }
+
+    if (sanitizedFallback) {
+      return { rewrites: sanitizedFallback, sanitized: true }
+    }
+
+    throw new Error("Generated rewrites added details that aren't in your original text. Please simplify the request and try again.")
   } catch (err) {
-    console.error("Backend fetch error:", err);
-    throw new Error("Failed to connect to the backend. Please try again.");
+    console.error("Backend fetch error:", err)
+    throw new Error("Failed to connect to the backend. Please try again.")
   }
 }
+
 
